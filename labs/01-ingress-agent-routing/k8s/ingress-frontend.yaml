@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway-frontend
+  namespace: cloud-native-lab
+  annotations:
+    # Thay bằng CIDR thực tế mà ingress-nginx nhìn thấy.
+    nginx.ingress.kubernetes.io/allowlist-source-range: "INTERNAL_CIDR"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: gateway.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  name: http
