@@ -1,12 +1,9 @@
-# Broad internal routes: the simulated external IP is denied.
+# Broad application routes are unchanged and do not require the agent API key.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: gateway-internal
   namespace: cloud-native-lab
-  annotations:
-#    nginx.ingress.kubernetes.io/denylist-source-range: "172.20.0.1/32"
-    nginx.ingress.kubernetes.io/denylist-source-range: "172.20.0.2/32"
 spec:
   ingressClassName: nginx
   rules:
@@ -28,15 +25,14 @@ spec:
                 port:
                   name: http
 ---
-# Narrow integration exceptions: the same simulated external IP is allowed.
+# Exact agent endpoints require API-key authentication.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: gateway-agent
   namespace: cloud-native-lab
   annotations:
-#    nginx.ingress.kubernetes.io/allowlist-source-range: "172.20.0.1/32"
-    nginx.ingress.kubernetes.io/allowlist-source-range: "172.20.0.2/32"
+    nginx.ingress.kubernetes.io/auth-url: "http://api-key-auth.cloud-native-lab.svc.cluster.local/authorize"
 spec:
   ingressClassName: nginx
   rules:
@@ -64,4 +60,3 @@ spec:
                 name: hub
                 port:
                   name: http
-
