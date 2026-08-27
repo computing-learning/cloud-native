@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hub
+  namespace: ingress-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hub
+  template:
+    metadata:
+      labels:
+        app: hub
+    spec:
+      containers:
+        - name: hub
+          image: ingress-lab-hub:latest
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HUB_API_KEY
+              value: lab-hub-key
+          ports:
+            - name: http
+              containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hub
+  namespace: ingress-lab
+spec:
+  selector:
+    app: hub
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

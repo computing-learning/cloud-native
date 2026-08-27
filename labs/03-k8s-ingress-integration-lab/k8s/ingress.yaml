@@ -1,0 +1,173 @@
+# ============================================================
+# 1. General Hub REST API
+#
+# Public:
+#   /api/health          → /health
+#   /api/users           → /users
+#   /api/reports         → /reports
+#   /api/internal/status → /internal/status
+#
+# Header boundary:
+#   Nếu x-hub-api-key xuất hiện tại general REST API
+#   thì NGINX trả 403, request không tới Hub.
+# ============================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hub-internal-api
+  namespace: ingress-lab
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      if ($http_x_hub_api_key != "") {
+        return 403;
+      }
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: gateway.local
+      http:
+        paths:
+          - path: /api/(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: hub
+                port:
+                  name: http
+
+---
+
+# ============================================================
+# 2. Mock MCP
+#
+# Public:
+#   /api/mcp       → /mcp
+#   /api/mcp/tools → /mcp/tools
+#
+# Đây là rule cụ thể hơn general /api/(.*).
+# Ingress cho phép API-key header đi qua.
+# Hub chịu trách nhiệm kiểm tra giá trị key.
+# ============================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hub-mcp
+  namespace: ingress-lab
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /mcp$1
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: gateway.local
+      http:
+        paths:
+          - path: /api/mcp(/.*)?$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: hub
+                port:
+                  name: http
+
+---
+
+# ============================================================
+# 3. Mock A2A JSON-RPC
+#
+# Public:
+#   POST /api/a2a
+#
+# Backend Hub:
+#   POST /
+#
+# Regex path được dùng để A2A rule được ưu tiên trước
+# general /api/(.*) trong generated NGINX configuration.
+# ============================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hub-a2a
+  namespace: ingress-lab
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: gateway.local
+      http:
+        paths:
+          - path: /api/a2a/?$
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: hub
+                port:
+                  name: http
+
+---
+
+# ============================================================
+# 4. Public A2A Agent Card
+#
+# Public và backend path giống nhau:
+#   /.well-known/agent-card.json
+#
+# Không rewrite.
+# Không yêu cầu API key vì đây là discovery endpoint.
+# ============================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hub-agent-card
+  namespace: ingress-lab
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: gateway.local
+      http:
+        paths:
+          - path: /.well-known/agent-card.json
+            pathType: Exact
+            backend:
+              service:
+                name: hub
+                port:
+                  name: http
+
+---
+
+# ============================================================
+# 5. Frontend catch-all
+#
+# Public:
+#   /
+#
+# Prefix / bắt các request không match rule cụ thể hơn.
+# ============================================================
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend
+  namespace: ingress-lab
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: gateway.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  name: http
