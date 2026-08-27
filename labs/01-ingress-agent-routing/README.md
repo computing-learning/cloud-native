@@ -1,393 +1,126 @@
-# Lab 01 — Kubernetes Ingress Agent Routing
-
-## Problem
-
-Một hệ thống chạy trong Kubernetes gồm:
-
-* Frontend phục vụ web application
-* Hub cung cấp web APIs
-* Hub cung cấp một MCP endpoint
-* Hub cung cấp A2A Agent Card và A2A endpoint
-
-Một external agent cần truy cập MCP và A2A thông qua một public hostname.
-
-External agent không nên biết:
-
-* Pod IP
-* Kubernetes Service name
-* ClusterIP
-* Hub internal paths
-* Hub implementation
-* Business logic
-* AI implementation
-
-Lab cần chứng minh NGINX Ingress có thể expose public paths khác với internal Hub paths.
-
----
+# Lab 01 — Same-host Agent API Isolation
 
 ## Goal
 
-Kiểm chứng happy-path routing:
+Prove that one hostname can expose only selected agent APIs to an external source IP while denying that same IP access to the frontend and internal REST APIs.
 
-```text
-Public request
-→ NGINX Ingress Controller
-→ Kubernetes Service
-→ Pod
-→ Internal application path
-```
+This lab isolates Kubernetes Ingress routing and source-IP policy. It contains no database, LLM, business logic, production secret, or complete MCP/A2A implementation.
 
-Lab chỉ kiểm tra:
+## Problem questions
 
-* Hostname routing
-* Path routing
-* Path rewrite
-* Service-to-Pod routing
-* Public MCP endpoint
-* Public A2A endpoint
-* Frontend routing
-* Hub web API routing
+Before running the lab, predict:
 
-MCP và A2A chỉ là HTTP mock contracts.
-
----
-
-## Components
-
-### Frontend
-
-Static HTML application.
-
-Internal endpoint:
-
-```http
-GET /
-```
-
-### Hub
-
-Minimal HTTP server.
-
-Internal endpoints:
-
-```http
-GET  /healthz
-GET  /api/status
-POST /mcp
-GET  /agent-card.json
-POST /a2a
-```
-
-### External Agent
-
-Shell script sử dụng `curl` để mô phỏng external integration client.
-
-External Agent không gọi trực tiếp Hub Service hoặc Pod. Nó chỉ gọi:
-
-```text
-http://gateway.local
-```
-
-### Kubernetes
-
-Kubernetes cung cấp:
-
-* Hub Deployment
-* Hub Service
-* Frontend Deployment
-* Frontend Service
-* Ingress rules
-
-### NGINX Ingress Controller
-
-Ingress Controller nhận external HTTP request, chọn rule và forward request đến Kubernetes Service tương ứng.
-
----
+1. If `/api` is denied, can a more specific `Exact` path such as `/api/mcp` still be allowed?
+2. Does an Ingress annotation apply to one path or the whole Ingress resource?
+3. Which rule wins for `/api/mcp`: `Prefix /api` or `Exact /api/mcp`?
+4. What response should `/api/mcp/tools` receive?
+5. Which IP does ingress-nginx evaluate: the workstation IP, Docker bridge IP, or a forwarded IP?
 
 ## Architecture
 
 ```text
-Browser
-  │ GET /
-  ▼
-NGINX Ingress Controller
-  ▼
-Frontend Service
-  ▼
-Frontend Pod
+Current workstation
+source IP seen by ingress-nginx: 172.20.0.1
+        |
+        v
+gateway.local:80
+        |
+        v
+ingress-nginx
+        |
+        +-- /api/mcp                     Exact + allow source IP --> Hub
+        +-- /api/a2a                     Exact + allow source IP --> Hub
+        +-- /api/a2a/agent-card.json     Exact + allow source IP --> Hub
+        +-- /api/*                       Prefix + deny source IP  --> 403
+        +-- /*                            Prefix + deny source IP  --> 403
 ```
+
+There is no path rewrite. The public path received by Ingress is the same path received by the Hub.
+
+## Expected policy
+
+| Source | Path | Expected |
+|---|---|---:|
+| `172.20.0.1` | `/api/mcp` | 200 |
+| `172.20.0.1` | `/api/a2a` | 200 |
+| `172.20.0.1` | `/api/a2a/agent-card.json` | 200 |
+| `172.20.0.1` | `/api/status` | 403 |
+| `172.20.0.1` | `/` | 403 |
+| `172.20.0.1` | `/api/mcp/tools` | 403 |
+
+## Prerequisites
+
+```bash
+docker --version
+kind version
+kubectl version --client
+curl --version
+```
+
+## Build and run
+
+```bash
+make cluster
+make ingress
+make deploy
+make verify
+```
+
+Or run each script directly:
+
+```bash
+./scripts/create-cluster.sh
+./scripts/install-ingress.sh
+./scripts/deploy.sh
+./external-agent/test-integration.sh
+```
+
+## Observe
+
+```bash
+kubectl config current-context
+kubectl get all -n cloud-native-lab
+kubectl get ingress -n cloud-native-lab
+kubectl describe ingress -n cloud-native-lab
+kubectl logs -n ingress-nginx deployment/ingress-nginx-controller --tail 50
+kubectl logs -n cloud-native-lab deployment/hub --tail 50
+```
+
+The ingress access log must show the source address used by the policy. If it is not `172.20.0.1`, update all allowlist and denylist annotations in `k8s/ingress.yaml`.
+
+## Break intentionally
+
+Remove the three `Exact` paths from `gateway-agent`, apply the manifest, and predict the result:
 
 ```text
-Web Client
-  │ GET /api/status
-  ▼
-NGINX Ingress Controller
-  ▼
-Hub Service
-  ▼
-Hub Pod
-  ▼
-GET /api/status
+POST /api/mcp -> matches Prefix /api -> denied -> 403
 ```
 
-```text
-External Agent
-  │ POST /agent/mcp
-  ▼
-NGINX Ingress Controller
-  │ rewrite
-  ▼
-Hub Service
-  ▼
-Hub Pod
-  ▼
-POST /mcp
+Restore the paths, apply again, then run `make verify`.
+
+## Diagnose
+
+```bash
+kubectl apply --dry-run=server -f k8s/ingress.yaml
+kubectl get ingress -A
+kubectl describe ingress -n cloud-native-lab
+kubectl exec -n ingress-nginx deployment/ingress-nginx-controller -- nginx -T
+curl -i --resolve gateway.local:80:127.0.0.1 http://gateway.local/api/status
 ```
 
-```text
-External Agent
-  │ GET /agent/a2a/agent-card.json
-  ▼
-NGINX Ingress Controller
-  │ rewrite
-  ▼
-Hub Service
-  ▼
-Hub Pod
-  ▼
-GET /agent-card.json
+If a denied endpoint returns 200, look for another Ingress defining the same host and path. For ingress-nginx, overlapping rules from multiple resources are merged into one NGINX server.
+
+## Cleanup
+
+```bash
+make destroy
 ```
 
-```text
-External Agent
-  │ POST /agent/a2a
-  ▼
-NGINX Ingress Controller
-  │ rewrite
-  ▼
-Hub Service
-  ▼
-Hub Pod
-  ▼
-POST /a2a
-```
+This deletes only the kind cluster named `agent-routing-lab`.
 
----
+## Architecture takeaway
 
-## Routing Contract
+Path selection and access control are separate responsibilities. A broad internal `Prefix` rule can deny an external source, while more specific `Exact` rules explicitly expose a small integration surface to that source.
 
-| Public request                   | Target Service | Internal path      |
-| -------------------------------- | -------------- | ------------------ |
-| `GET /`                          | frontend       | `/`                |
-| `GET /api/status`                | hub            | `/api/status`      |
-| `POST /agent/mcp`                | hub            | `/mcp`             |
-| `GET /agent/a2a/agent-card.json` | hub            | `/agent-card.json` |
-| `POST /agent/a2a`                | hub            | `/a2a`             |
+For production, prefer an internal allowlist for frontend/API rather than only denying one partner IP. Also verify real client-IP preservation through every load balancer and trusted proxy.
 
----
-
-## Boundary Map
-
-| From                | To                 | Boundary             | Responsibility                     |
-| ------------------- | ------------------ | -------------------- | ---------------------------------- |
-| Client              | Ingress Controller | External network     | Receive public HTTP request        |
-| Ingress Controller  | Service            | Kubernetes network   | Select backend using host and path |
-| Service             | Pod                | Kubernetes endpoint  | Select matching Pod                |
-| Ingress public path | Hub internal path  | Routing contract     | Rewrite public path                |
-| Hub router          | Handler            | Application boundary | Return deterministic mock response |
-
-Kubernetes Service does not understand HTTP paths.
-
-HTTP host matching, path matching, and rewrite are responsibilities of the Ingress Controller.
-
----
-
-## Happy Scenarios
-
-### Scenario 01 — Frontend
-
-Request:
-
-```http
-GET http://gateway.local/
-```
-
-Expected:
-
-```text
-Ingress
-→ Frontend Service
-→ Frontend Pod
-→ Static HTML
-```
-
-### Scenario 02 — Hub Web API
-
-Request:
-
-```http
-GET http://gateway.local/api/status
-```
-
-Expected:
-
-```text
-Ingress
-→ Hub Service
-→ Hub Pod
-→ /api/status
-```
-
-### Scenario 03 — MCP
-
-Request:
-
-```http
-POST http://gateway.local/agent/mcp
-Content-Type: application/json
-```
-
-Expected internal request:
-
-```http
-POST /mcp
-```
-
-Expected response evidence:
-
-```json
-{
-  "service": "hub",
-  "protocol": "mcp-mock",
-  "method": "POST",
-  "received_path": "/mcp"
-}
-```
-
-### Scenario 04 — A2A Agent Card
-
-Request:
-
-```http
-GET http://gateway.local/agent/a2a/agent-card.json
-```
-
-Expected internal request:
-
-```http
-GET /agent-card.json
-```
-
-Agent Card must advertise the public A2A URL:
-
-```text
-http://gateway.local/agent/a2a
-```
-
-### Scenario 05 — A2A Request
-
-Request:
-
-```http
-POST http://gateway.local/agent/a2a
-Content-Type: application/json
-```
-
-Expected internal request:
-
-```http
-POST /a2a
-```
-
----
-
-## Evidence Contract
-
-Each Hub response must expose:
-
-```json
-{
-  "service": "hub",
-  "protocol": "mcp-mock",
-  "method": "POST",
-  "received_path": "/mcp",
-  "request_id": "..."
-}
-```
-
-This lets the learner compare:
-
-```text
-Public request path
-versus
-Internal received path
-```
-
-HTTP `200` alone is not sufficient evidence.
-
----
-
-## Scope
-
-Included:
-
-* Hub mock
-* Frontend static page
-* External agent mock
-* Container images
-* kind cluster
-* Kubernetes Deployment
-* Kubernetes Service
-* ingress-nginx
-* Ingress path routing
-* Path rewrite
-* `curl` verification
-
-Not included:
-
-* Real MCP implementation
-* Real A2A implementation
-* LLM
-* Database
-* Business logic
-* Production authentication
-* IP allowlist
-* TLS
-* Rate limiting
-* Monitoring
-* Routing conflicts
-
----
-
-## Build Order
-
-```text
-01. Problem and architecture
-02. Minimal Hub
-03. Static frontend
-04. Local HTTP verification
-05. Container images
-06. kind cluster
-07. Kubernetes Deployments
-08. Kubernetes Services
-09. Basic Ingress routing
-10. Path rewrite
-11. External Agent verification
-12. Observations and architecture takeaways
-```
-
-Each step must be reviewed and run manually before continuing.
-
----
-
-## Complete Condition
-
-The lab is complete when the learner can explain:
-
-1. Which process accepts the external connection.
-2. Which component matches the HTTP path.
-3. Which component selects the destination Pod.
-4. Where public paths are rewritten.
-5. Why Kubernetes Service does not perform path routing.
-6. Why external clients do not need internal Kubernetes addresses.
-7. Which evidence proves the intended internal handler received the request.

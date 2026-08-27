@@ -10,118 +10,107 @@ kind version:
 kubectl version:
 Kubernetes context:
 ingress-nginx version:
+Source IP observed by ingress-nginx:
 ```
 
-## Scenario 01 — Frontend
+## Scenario 01 — Exact MCP exception
 
-### Prediction
+Prediction:
 
-```text
-Public path:
-Target Service:
-Internal path:
-Expected result:
-```
+Actual:
 
-### Actual
+Difference:
 
-```text
-Not run yet.
-```
+Why?
 
----
+## Scenario 02 — Exact A2A exceptions
 
-## Scenario 02 — Hub Web API
+Prediction:
 
-### Prediction
+Actual:
 
-```text
-Public path:
-Target Service:
-Internal path:
-Expected result:
-```
+Difference:
 
-### Actual
+Why?
 
-```text
-Not run yet.
-```
+## Scenario 03 — Internal API denied
 
----
+Prediction:
 
-## Scenario 03 — MCP Routing
+Actual:
 
-### Prediction
+Difference:
 
-```text
-Public path: /agent/mcp
-Target Service:
-Internal path:
-Expected received_path:
-```
+Why?
 
-### Actual
+## Scenario 04 — Frontend denied
 
-```text
-Not run yet.
-```
+Prediction:
 
----
+Actual:
 
-## Scenario 04 — A2A Agent Card
+Difference:
 
-### Prediction
+Why?
 
-```text
-Public path: /agent/a2a/agent-card.json
-Target Service:
-Internal path: /agent-card.json
-Expected public A2A URL:
-```
+## Scenario 05 — Exact path does not expose children
 
-### Actual
+Prediction:
 
-```text
-Not run yet.
-```
+Actual:
 
----
+Difference:
 
-## Scenario 05 — A2A Request
+Why?
 
-### Prediction
+## Failure observed
 
-```text
-Public path: /agent/a2a
-Target Service:
-Internal path:
-Expected result:
-```
+What failed?
 
-### Actual
+Which process or network boundary failed?
 
-```text
-Not run yet.
-```
+## Fix
 
----
+What changed?
 
-## Request Flow Evidence
+Why is Ingress the correct layer for this fix?
 
-```text
-External client:
-Ingress Controller:
-Matched Ingress rule:
-Target Service:
-Selected Pod:
-Public path:
-Internal path:
-Request ID:
-```
-
-## Architecture Takeaways
+## Architecture takeaways
 
 1.
 2.
 3.
+
+## Review schedule
+
+| Day | Keywords | Notes |
+|---:|---|---|
+| 1 | Ingress, host, path | |
+| 3 | Exact, Prefix, rule priority | |
+| 5 | allowlist, denylist, source IP | |
+| 7 | proxy boundary, duplicate rule | |
+
+## Capability matrix
+
+| Capability | Status |
+|---|---:|
+| Same hostname | ✅ |
+| Frontend routing | ✅ |
+| Internal REST routing | ✅ |
+| MCP mock contract | ✅ |
+| A2A mock contract | ✅ |
+| Exact external exceptions | ✅ |
+| External-IP denial for internal surface | ✅ |
+| Authentication | ❌ |
+| Trusted production proxy configuration | ❌ |
+| TLS | ❌ |
+| Monitoring | ❌ |
+
+## Backlog
+
+- Replace denylist with an internal CIDR allowlist.
+- Verify client IP through a real load balancer or reverse proxy.
+- Add API-key or token authentication.
+- Add TLS.
+- Add rate limiting and audit logging.
+

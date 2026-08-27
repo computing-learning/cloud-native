@@ -1,21 +1,11 @@
-# ============================================================
-# Internal frontend and REST API
-#
-# Simulated external-agent source IP:
-#   172.20.0.1
-#
-# This IP is denied from:
-#   /
-#   /api/*
-#
-# No URL rewrite.
-# ============================================================
+# Broad internal routes: the simulated external IP is denied.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: gateway-internal
   namespace: cloud-native-lab
   annotations:
+#    nginx.ingress.kubernetes.io/denylist-source-range: "172.20.0.1/32"
     nginx.ingress.kubernetes.io/denylist-source-range: "172.20.0.1/32"
 spec:
   ingressClassName: nginx
@@ -30,7 +20,6 @@ spec:
                 name: hub
                 port:
                   name: http
-
           - path: /
             pathType: Prefix
             backend:
@@ -38,28 +27,15 @@ spec:
                 name: frontend
                 port:
                   name: http
-
 ---
-# ============================================================
-# External-agent exceptions
-#
-# Simulated external-agent source IP:
-#   172.20.0.1
-#
-# This IP is allowed to access only:
-#   POST /api/mcp
-#   POST /api/a2a
-#   GET  /api/a2a/agent-card.json
-#
-# Exact paths prevent other Hub APIs from being exposed.
-# No URL rewrite.
-# ============================================================
+# Narrow integration exceptions: the same simulated external IP is allowed.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: gateway-agent
   namespace: cloud-native-lab
   annotations:
+#    nginx.ingress.kubernetes.io/allowlist-source-range: "172.20.0.1/32"
     nginx.ingress.kubernetes.io/allowlist-source-range: "172.20.0.1/32"
 spec:
   ingressClassName: nginx
@@ -67,14 +43,13 @@ spec:
     - host: gateway.local
       http:
         paths:
-          - path: agent-card.json
+          - path: /api/a2a/agent-card.json
             pathType: Exact
             backend:
               service:
                 name: hub
                 port:
                   name: http
-
           - path: /api/mcp
             pathType: Exact
             backend:
@@ -82,7 +57,6 @@ spec:
                 name: hub
                 port:
                   name: http
-
           - path: /api/a2a
             pathType: Exact
             backend:
@@ -90,3 +64,4 @@ spec:
                 name: hub
                 port:
                   name: http
+

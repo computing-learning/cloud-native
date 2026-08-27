@@ -1,152 +1,98 @@
 import logging
 import uuid
-from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s level=%(levelname)s message=%(message)s",
-)
-
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("hub")
 
-PUBLIC_A2A_URL = "http://gateway.local/agent/a2a"
-
-app = FastAPI(
-    title="Ingress Routing Hub Mock",
-    version="1.0.0",
-)
+app = FastAPI(title="Ingress Agent Routing Lab Hub", version="1.0.0")
 
 
-def request_metadata(
-    request: Request,
-    protocol: str,
-) -> dict[str, str]:
+@app.middleware("http")
+async def request_context(request: Request, call_next):
+    request_id = request.headers.get("x-request-id", uuid.uuid4().hex)
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["x-request-id"] = request_id
+    logger.info(
+        "method=%s path=%s status=%s client=%s request_id=%s",
+        request.method,
+        request.url.path,
+        response.status_code,
+        request.client.host if request.client else "unknown",
+        request_id,
+    )
+    return response
+
+
+def envelope(request: Request, protocol: str, **extra):
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    request_id = getattr(request.state, "request_id", "")
     return {
         "service": "hub",
         "protocol": protocol,
         "method": request.method,
         "received_path": request.url.path,
-        "request_id": request.state.request_id,
+        "forwarded_for": forwarded_for,
+        "request_id": request_id,
+        **extra,
     }
-
-
-@app.middleware("http")
-async def add_request_context(
-    request: Request,
-    call_next,
-):
-    request_id = request.headers.get("X-Request-Id")
-
-    if not request_id:
-        request_id = str(uuid.uuid4())
-
-    request.state.request_id = request_id
-
-    logger.info(
-        "request_started request_id=%s method=%s path=%s",
-        request_id,
-        request.method,
-        request.url.path,
-    )
-
-    response = await call_next(request)
-
-    response.headers["X-Request-Id"] = request_id
-
-    logger.info(
-        "request_completed request_id=%s method=%s path=%s status=%s",
-        request_id,
-        request.method,
-        request.url.path,
-        response.status_code,
-    )
-
-    return response
 
 
 @app.get("/healthz")
 async def healthz(request: Request):
-    return JSONResponse(
-        status_code=200,
-        content={
-            **request_metadata(request, "http"),
-            "status": "healthy",
-        },
-    )
+    return envelope(request, "health", status="healthy")
 
 
 @app.get("/api/status")
 async def api_status(request: Request):
-    return JSONResponse(
-        status_code=200,
-        content={
-            **request_metadata(request, "rest"),
-            "status": "available",
-            "capabilities": [
-                "web-api",
-                "mcp",
-                "a2a",
-            ],
-        },
+    return envelope(
+        request,
+        "rest",
+        status="available",
+        capabilities=["web-api", "mcp", "a2a"],
     )
 
 
-@app.post("/mcp")
-async def mcp_mock(
-    request: Request,
-):
-    body: dict[str, Any] = await request.json()
-
-    return JSONResponse(
-        status_code=200,
-        content={
-            **request_metadata(request, "mcp-mock"),
-            "status": "accepted",
-            "input": body,
-        },
+@app.post("/api/mcp")
+async def mcp(request: Request):
+    body = await request.json()
+    return envelope(
+        request,
+        "mcp-mock",
+        jsonrpc="2.0",
+        id=body.get("id"),
+        result={"tools": [{"name": "echo", "description": "Mock tool"}]},
     )
 
 
-@app.get("/agent-card.json")
+@app.get("/api/a2a/agent-card.json")
 async def agent_card(request: Request):
-    return JSONResponse(
-        status_code=200,
-        content={
-            "name": "Hub Mock Agent",
-            "description": (
-                "A deterministic mock agent used to verify "
-                "Kubernetes Ingress routing."
-            ),
-            "url": PUBLIC_A2A_URL,
-            "capabilities": [
-                "mock-task",
-            ],
-            "_debug": request_metadata(
-                request,
-                "a2a-agent-card-mock",
-            ),
-        },
+    return envelope(
+        request,
+        "a2a-agent-card-mock",
+        name="Cloud Native Lab Agent",
+        description="Mock A2A endpoint for ingress routing tests",
+        url="http://gateway.local/api/a2a",
+        capabilities={"streaming": False},
     )
 
 
-@app.post("/a2a")
-async def a2a_mock(
-    request: Request,
-):
-    body: dict[str, Any] = await request.json()
+@app.post("/api/a2a")
+async def a2a(request: Request):
+    body = await request.json()
+    return envelope(
+        request,
+        "a2a-mock",
+        result={"status": "completed", "echo": body},
+    )
 
+
+@app.exception_handler(404)
+async def not_found(request: Request, _exception):
     return JSONResponse(
-        status_code=200,
-        content={
-            **request_metadata(request, "a2a-mock"),
-            "status": "completed",
-            "result": {
-                "message": "Mock A2A request completed",
-                "input": body,
-            },
-        },
+        status_code=404,
+        content=envelope(request, "unknown", error="not_found"),
     )
